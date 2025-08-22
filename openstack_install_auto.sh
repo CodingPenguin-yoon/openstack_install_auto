@@ -17,15 +17,9 @@
 
 
 # =================================================================================
-# 
+# 인자 확인 
 # =================================================================================
 
-
-# --- 사용자 설정 변수 ---
-
-GIT_REPO_URL="https://github.com/CodingPenguin-yoon/openstack_install_auto.git"
-
-# --- 설정 끝 ---
 
 
 # --- 0. 입력값 확인 ---
@@ -208,11 +202,14 @@ EOC
 sudo mkdir -p /etc/kolla
 sudo chown \$USER:\$USER /etc/kolla
 
-echo "7. Git Repo에서 globals.yml을 가져오고 최종 설정을 적용합니다..."
-
-sudo git clone $GIT_REPO_URL /tmp/kolla-config
-sudo cp /tmp/kolla-config/globals.yml /etc/kolla/globals.yml
-sudo rm -rf /tmp/kolla-config
+# --- 7. 로컬 globals.yml 파일 복사 및 설정 적용 ---
+echo "7. 로컬 globals.yml 파일을 복사하고 최종 설정을 적용합니다..."
+# 스크립트와 같은 경로에 있는 globals.yml 파일을 사용합니다.
+if [ ! -f "globals.yml" ]; then
+    echo "오류: 스크립트와 동일한 위치에 globals.yml 파일이 없습니다."
+    exit 1
+fi
+sudo cp ./globals.yml /etc/kolla/globals.yml
 
 sudo sed -i "s/^kolla_internal_vip_address:.*/kolla_internal_vip_address: \"$KOLLA_VIP\"/" /etc/kolla/globals.yml
 sudo sed -i "s/^network_interface:.*/network_interface: \"$INTERNAL_INTERFACE_NAME\"/" /etc/kolla/globals.yml
@@ -258,3 +255,4 @@ EOF
 echo ""
 
 echo "모든 설치 과정이 성공적으로 완료되었습니다!"
+
