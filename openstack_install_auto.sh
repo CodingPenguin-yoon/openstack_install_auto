@@ -363,9 +363,9 @@ sleep 2
 
 echo "5. Kolla-Ansible과 관련 라이브러리를 설치합니다..."
 
-python3 -m venv $HOME/kolla-openstack
+python3 -m venv /opt/stack/kolla-openstack
 sleep 1  # 가상환경 생성 후 대기
-source $HOME/kolla-openstack/bin/activate
+source /opt/stack/kolla-openstack/bin/activate
 pip install -U pip 'ansible>=8,<9' docker pkgconfig dbus-python
 pip install git+https://opendev.org/openstack/kolla-ansible@stable/2024.1
 sleep 1  # kolla-ansible 설치 후 대기
@@ -407,9 +407,9 @@ echo "   - 최종 설정 완료: VIP=$KOLLA_VIP, Internal NIC=$INTERNAL_INTERFAC
 echo "8. OpenStack 배포를 시작합니다..."
 
 
-INVENTORY_PATH="$HOME/kolla-openstack/share/kolla-ansible/ansible/inventory/all-in-one"
+INVENTORY_PATH="/opt/stack/kolla-openstack/share/kolla-ansible/ansible/inventory/all-in-one"
 
-source $HOME/kolla-openstack/bin/activate
+source /opt/stack/kolla-openstack/bin/activate
 sleep 1  # 가상환경 활성화 후 대기
 
 kolla-ansible install-deps
@@ -436,7 +436,7 @@ sleep 1  # admin-openrc 로드 후 대기
 
 echo "10. 'init-runonce' 스크립트를 실행하여 초기 환경을 설정합니다..."
 
-INIT_RUNONCE_PATH="$HOME/kolla-openstack/share/kolla-ansible/init-runonce"
+INIT_RUNONCE_PATH="/opt/stack/kolla-openstack/share/kolla-ansible/init-runonce"
 if [ -f "\$INIT_RUNONCE_PATH" ]; then
     # sed를 이용해 init-runonce 파일의 네트워크 변수들을 동적으로 변경
     sudo sed -i "s|^EXT_NET_CIDR=.*|EXT_NET_CIDR='${EXT_NET_CIDR}'|" "\$INIT_RUNONCE_PATH"
