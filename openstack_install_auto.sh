@@ -351,10 +351,12 @@ echo ""
 sudo -u $STACK_USER -i <<EOF
 set -e
 
+cd $STACK_HOME
+
 echo "5. Kolla-Ansible과 관련 라이브러리를 설치합니다..."
 
-python3 -m venv \$HOME/kolla-openstack
-source \$HOME/kolla-openstack/bin/activate
+python3 -m venv $HOME/kolla-openstack
+source $HOME/kolla-openstack/bin/activate
 pip install -U pip 'ansible>=8,<9' docker pkgconfig dbus-python
 pip install git+https://opendev.org/openstack/kolla-ansible@stable/2024.1
 deactivate
@@ -393,9 +395,9 @@ echo "   - 최종 설정 완료: VIP=$KOLLA_VIP, Internal NIC=$INTERNAL_INTERFAC
 echo "8. OpenStack 배포를 시작합니다..."
 
 
-INVENTORY_PATH="\$HOME/kolla-openstack/share/kolla-ansible/ansible/inventory/all-in-one"
+INVENTORY_PATH="$HOME/kolla-openstack/share/kolla-ansible/ansible/inventory/all-in-one"
 
-source \$HOME/kolla-openstack/bin/activate
+source $HOME/kolla-openstack/bin/activate
 
 kolla-ansible install-deps
 kolla-genpwd 
@@ -405,7 +407,7 @@ kolla-ansible -i \$INVENTORY_PATH deploy
 
 echo "9. 배포 후 마무리 작업을 진행합니다..."
 
-sudo usermod -aG docker \$USER
+sudo usermod -aG docker stack
 pip install python-openstackclient -c https://releases.openstack.org/constraints/upper/2024.1
 kolla-ansible -i \$INVENTORY_PATH post-deploy
 source /etc/kolla/admin-openrc.sh
