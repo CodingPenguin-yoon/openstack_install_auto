@@ -371,7 +371,7 @@ forks=100
 EOC
 
 sudo mkdir -p /etc/kolla
-sudo chown \$USER:\$USER /etc/kolla
+sudo chown $USER:$USER /etc/kolla
 
 echo "7. 로컬 globals.yml 설정을 적용합니다..."
 
