@@ -44,7 +44,7 @@ show_usage() {
 
 
 # =================================================================================
-# [함수] 네트워크형식 검사 함수수
+# [함수] 네트워크형식 검사 함수
 # =================================================================================
 
 validate_ip() {
@@ -76,7 +76,7 @@ validate_ip() {
 }
 
 # =================================================================================
-# [함수] 인터페이스 존재 여부 확인 함수수
+# [함수] 인터페이스 존재 여부 확인 함수
 # =================================================================================
 
 check_interface_exists() {
@@ -94,7 +94,7 @@ check_interface_exists() {
 }
 
 # =================================================================================
-# [함수] 인터페이스 상태 확인 함수수
+# [함수] 인터페이스 상태 확인 함수
 # =================================================================================
 
 check_interface_status() {
@@ -141,7 +141,7 @@ EXT_NET_RANGE_START=$2
 EXT_NET_RANGE_END=$3
 INTERNAL_INTERFACE_NAME=$4
 EXTERNAL_INTERFACE_NAME=$5
-STACK_USER="stack"
+STACK_USER="$USER"
 STACK_HOME="/opt/$STACK_USER"
 
 echo "=== 입력된 설정 정보 ==="
@@ -308,16 +308,30 @@ sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 sudo systemctl stop ufw apparmor || true
 sudo systemctl disable ufw apparmor || true
 
-# --- 3. 'stack' 사용자 생성 및 권한 설정 ---
+# --- 3. 현재 사용자의 OpenStack 설치 조건 확인 ---
 
-echo "3. '$STACK_USER' 사용자를 생성하고 sudo 권한을 부여합니다..."
+echo "3. 현재 사용자($STACK_USER)의 OpenStack 설치 조건을 확인합니다..."
 
-if ! id -u $STACK_USER > /dev/null 2>&1; then
-    sudo useradd -s /bin/bash -d $STACK_HOME -m $STACK_USER
-    sudo chmod 755 $STACK_HOME
-    echo "$STACK_USER ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/$STACK_USER
-    sleep 2  # 사용자 생성 후 대기
+# 3-1. sudo 권한 확인
+if ! sudo -n true 2>/dev/null; then
+    echo "오류: 현재 사용자($STACK_USER)에게 sudo 권한이 없습니다!"
+    echo "다음 명령으로 sudo 권한을 부여하세요:"
+    echo "  echo '$STACK_USER ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/$STACK_USER"
+    exit 1
 fi
+echo "   - sudo 권한 확인 완료"
+
+# 3-2. 홈 디렉토리 쓰기 권한 확인
+if [ ! -w "$STACK_HOME" ]; then
+    echo "오류: 홈 디렉토리($STACK_HOME)에 쓰기 권한이 없습니다!"
+    echo "다음 명령으로 권한을 설정하세요:"
+    echo "  sudo chown -R $STACK_USER:$STACK_USER $STACK_HOME"
+    echo "  sudo chmod 755 $STACK_HOME"
+    exit 1
+fi
+echo "   - 홈 디렉토리 쓰기 권한 확인 완료"
+
+echo "   - 사용자 조건 확인 완료"
 
 # --- 4. 필수 패키지 설치 ---
 
@@ -326,11 +340,6 @@ echo "4. 시스템을 업데이트하고 필수 패키지를 설치합니다..."
 sudo apt-get update
 sudo apt-get install -y git python3-dev libffi-dev python3-venv gcc libssl-dev python3-pip python3-full pkg-config libdbus-1-dev cmake libglib2.0-dev curl
 sleep 2  # 패키지 설치 후 대기
-
-# --- 여기부터 stack 사용자로 명령어 블록 실행 ---
-
-
-
 
 
 
@@ -349,12 +358,7 @@ echo "   - globals.yml 파일 발견: $GLOBALS_FILE_PATH"
 echo ""
 sleep 2  # sudo 전환 전 대기
 
-# 확실한 사용자 전환 확인
-echo "stack 사용자로 전환을 시도합니다..."
-sleep 1
-id stack || { echo "오류: stack 사용자가 없습니다!"; exit 1; }
-sleep 1
-sudo su - stack <<EOF
+echo "5. 사용자로 Kolla-Ansible 설치를 시작합니다..."
 set -e
 sleep 2
 
@@ -363,9 +367,9 @@ sleep 2
 
 echo "5. Kolla-Ansible과 관련 라이브러리를 설치합니다..."
 
-python3 -m venv /opt/stack/kolla-openstack
+python3 -m venv $STACK_HOME/kolla-openstack
 sleep 1  # 가상환경 생성 후 대기
-source /opt/stack/kolla-openstack/bin/activate
+source $STACK_HOME/kolla-openstack/bin/activate
 pip install -U pip 'ansible>=8,<9' docker pkgconfig dbus-python
 pip install git+https://opendev.org/openstack/kolla-ansible@stable/2024.1
 sleep 1  # kolla-ansible 설치 후 대기
@@ -381,7 +385,7 @@ forks=100
 EOC
 
 sudo mkdir -p /etc/kolla
-sudo chown stack:stack /etc/kolla
+sudo chown $STACK_USER:$STACK_USER /etc/kolla
 sleep 1  # 권한 설정 후 대기
 
 echo "7. 로컬 globals.yml 설정을 적용합니다..."
@@ -395,9 +399,6 @@ sudo cp "$GLOBALS_FILE_PATH" /etc/kolla/globals.yml
 sleep 1  # 파일 복사 후 대기
 
 
-
-
-
 # 동적 설정 변경
 sudo sed -i "s/^kolla_internal_vip_address:.*/kolla_internal_vip_address: \"$KOLLA_VIP\"/" /etc/kolla/globals.yml
 sudo sed -i "s/^network_interface:.*/network_interface: \"$INTERNAL_INTERFACE_NAME\"/" /etc/kolla/globals.yml
@@ -407,9 +408,9 @@ echo "   - 최종 설정 완료: VIP=$KOLLA_VIP, Internal NIC=$INTERNAL_INTERFAC
 echo "8. OpenStack 배포를 시작합니다..."
 
 
-INVENTORY_PATH="/opt/stack/kolla-openstack/share/kolla-ansible/ansible/inventory/all-in-one"
+INVENTORY_PATH="$STACK_HOME/kolla-openstack/share/kolla-ansible/ansible/inventory/all-in-one"
 
-source /opt/stack/kolla-openstack/bin/activate
+source $STACK_HOME/kolla-openstack/bin/activate
 sleep 1  # 가상환경 활성화 후 대기
 
 kolla-ansible install-deps
@@ -436,7 +437,7 @@ sleep 1  # admin-openrc 로드 후 대기
 
 echo "10. 'init-runonce' 스크립트를 실행하여 초기 환경을 설정합니다..."
 
-INIT_RUNONCE_PATH="/opt/stack/kolla-openstack/share/kolla-ansible/init-runonce"
+INIT_RUNONCE_PATH="$STACK_HOME/kolla-openstack/share/kolla-ansible/init-runonce"
 if [ -f "\$INIT_RUNONCE_PATH" ]; then
     # sed를 이용해 init-runonce 파일의 네트워크 변수들을 동적으로 변경
     sudo sed -i "s|^EXT_NET_CIDR=.*|EXT_NET_CIDR='${EXT_NET_CIDR}'|" "\$INIT_RUNONCE_PATH"
@@ -455,4 +456,5 @@ EOF
 # --- stack 사용자 명령어 블록 끝 ---
 
 echo ""
+echo "모든 설치 과정이 성공적으로 완료되었습니다!"
 echo "모든 설치 과정이 성공적으로 완료되었습니다!"
