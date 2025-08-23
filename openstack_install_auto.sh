@@ -348,8 +348,6 @@ echo ""
 
 
 
-
-
 sudo -u $STACK_USER -i <<EOF
 set -e
 
@@ -371,7 +369,7 @@ forks=100
 EOC
 
 sudo mkdir -p /etc/kolla
-sudo chown $USER:$USER /etc/kolla
+sudo chown stack:stack /etc/kolla
 
 echo "7. 로컬 globals.yml 설정을 적용합니다..."
 
