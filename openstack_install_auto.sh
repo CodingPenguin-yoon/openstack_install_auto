@@ -349,9 +349,12 @@ echo "   - globals.yml 파일 발견: $GLOBALS_FILE_PATH"
 echo ""
 sleep 2  # sudo 전환 전 대기
 
-
-
-sudo -u $STACK_USER -i <<EOF
+# 확실한 사용자 전환 확인
+echo "stack 사용자로 전환을 시도합니다..."
+sleep 1
+id stack || { echo "오류: stack 사용자가 없습니다!"; exit 1; }
+sleep 1
+sudo su - stack <<EOF
 set -e
 sleep 2
 
