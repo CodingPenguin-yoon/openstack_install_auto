@@ -414,7 +414,7 @@ source /etc/kolla/admin-openrc.sh
 
 echo "10. 'init-runonce' 스크립트를 실행하여 초기 환경을 설정합니다..."
 
-INIT_RUNONCE_PATH="\$HOME/kolla-openstack/share/kolla-ansible/init-runonce"
+INIT_RUNONCE_PATH="$HOME/kolla-openstack/share/kolla-ansible/init-runonce"
 if [ -f "\$INIT_RUNONCE_PATH" ]; then
     # sed를 이용해 init-runonce 파일의 네트워크 변수들을 동적으로 변경
     sudo sed -i "s|^EXT_NET_CIDR=.*|EXT_NET_CIDR='${EXT_NET_CIDR}'|" "\$INIT_RUNONCE_PATH"
