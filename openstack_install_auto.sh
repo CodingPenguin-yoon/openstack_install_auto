@@ -1,147 +1,295 @@
 #!/bin/bash
 
 # =================================================================================
-# [최종] Kolla-Ansible 원클릭 설치 스크립트
+# [최종] Kolla-Ansible 원클릭 설치 스크립트 (사용자 지정 NIC 버전)
 # =================================================================================
+
+
 #
 # 중요: 이 스크립트를 실행하기 전에, 사용자는 반드시 아래 작업을 수동으로
 #          완료해야 합니다.
 #          1. Ubuntu Server 22.04 설치 및 SSH 설정
 #          2. Netplan으로 2개의 네트워크 인터페이스(내부/외부) 고정 IP 설정
 #          3. Cinder를 위한 LVM 볼륨 그룹(VG) 생성
+#          4. globals.yml 파일이 스크립트와 같은 디렉토리에 위치
 #
-# 사용법: sudo ./kolla_install.sh [내부 VIP 주소] [외부망 시작 IP] [외부망 끝 IP]
-# 예시:   sudo ./kolla_install.sh 192.168.2.10 192.168.2.50 192.168.2.80
+# 사용법: sudo ./openstack_install_auto.sh [내부 VIP] [외부망 시작IP] [외부망 끝IP] [내부NIC] [외부NIC]
+# 예시:   sudo ./openstack_install_auto.sh 192.168.2.10 192.168.2.50 192.168.2.80 ens18 ens19
 #
 # =================================================================================
 
 
-# =================================================================================
-# 인자 확인 
-# =================================================================================
+
+# --- 유틸리티 함수들 ---
+show_usage() {
+    echo "사용법: $0 [내부 VIP] [외부망 시작IP] [외부망 끝IP] [내부NIC] [외부NIC]"
+    echo ""
+    echo "매개변수:"
+    echo "  내부 VIP      : Kolla 내부 VIP 주소 (예: 192.168.2.10)"
+    echo "  외부망 시작IP  : 외부 네트워크 IP 풀 시작 (예: 192.168.2.50)"
+    echo "  외부망 끝IP   : 외부 네트워크 IP 풀 끝 (예: 192.168.2.80)"
+    echo "  내부NIC      : 내부 네트워크 인터페이스명 (예: ens18)"
+    echo "  외부NIC      : 외부 네트워크 인터페이스명 (예: ens19)"
+    echo ""
+    echo "필수 파일:"
+    echo "  globals.yml  : Kolla-Ansible 설정 파일 (스크립트와 같은 디렉토리)"
+    echo ""
+    echo "예시:"
+    echo "  $0 192.168.2.10 192.168.2.50 192.168.2.80 ens18 ens19"
+    echo ""
+    echo "현재 시스템의 네트워크 인터페이스 목록:"
+    echo "----------------------------------------"
+    ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print "  " $2}' | grep -v lo
+}
 
 
+# =================================================================================
+# [함수] 네트워크형식 검사 함수수
+# =================================================================================
+
+validate_ip() {
+    local ip=$1
+    local name=$2
+    
+    # IP 형식 검증
+    if ! [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        echo "오류: $name '$ip'는 올바른 IP 형식이 아닙니다."
+        return 1
+    fi
+    
+    # 각 옥텟 범위 검증 (0-255)
+    IFS='.' read -ra OCTETS <<< "$ip"
+    for octet in "${OCTETS[@]}"; do
+        if (( octet < 0 || octet > 255 )); then
+            echo "오류: $name '$ip'에 잘못된 옥텟 값($octet)이 있습니다. (0-255 범위)"
+            return 1
+        fi
+    done
+    
+    # 특수 IP 주소 체크
+    if [[ $ip == "0.0.0.0" || $ip == "255.255.255.255" ]]; then
+        echo "오류: $name '$ip'는 사용할 수 없는 특수 IP 주소입니다."
+        return 1
+    fi
+    
+    return 0
+}
+
+# =================================================================================
+# [함수] 인터페이스 존재 여부 확인 함수수
+# =================================================================================
+
+check_interface_exists() {
+    local interface=$1
+    local name=$2
+    
+    if [[ ! -d "/sys/class/net/$interface" ]]; then
+        echo "오류: $name '$interface'가 존재하지 않습니다."
+        echo "현재 사용 가능한 인터페이스:"
+        ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print "  " $2}' | grep -v lo
+        return 1
+    fi
+    
+    return 0
+}
+
+# =================================================================================
+# [함수] 인터페이스 상태 확인 함수수
+# =================================================================================
+
+check_interface_status() {
+    local interface=$1
+    local name=$2
+    local require_ip=$3  # "yes" 또는 "no"
+    
+    # 인터페이스 상태 확인
+    local state=$(cat "/sys/class/net/$interface/operstate" 2>/dev/null || echo "unknown")
+    echo "   - $name '$interface' 상태: $state"
+    
+    # IP 주소 확인
+    local ip_addr=$(ip -4 addr show "$interface" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+' | head -n1)
+    
+    if [[ "$require_ip" == "yes" ]]; then
+        if [[ -z "$ip_addr" ]]; then
+            echo "오류: $name '$interface'에 IP 주소가 할당되지 않았습니다."
+            echo "내부 인터페이스는 반드시 IP 주소가 설정되어 있어야 합니다."
+            return 1
+        fi
+        echo "   - $name IP 주소: $ip_addr"
+    else
+        if [[ -n "$ip_addr" ]]; then
+            echo "경고: $name '$interface'에 IP 주소($ip_addr)가 할당되어 있습니다."
+            echo "외부 인터페이스는 일반적으로 IP가 없어야 하지만, 설정에 따라 문제없을 수 있습니다."
+        else
+            echo "   - $name IP 주소: 없음 (정상)"
+        fi
+    fi
+    
+    return 0
+}
 
 # --- 0. 입력값 확인 ---
-if [ "$#" -ne 3 ]; then
-    echo "사용법: $0 [내부 VIP 주소] [외부망 시작 IP] [외부망 끝 IP]"
-    echo "   예시: $0 192.168.2.10 192.168.2.50 192.168.2.80"
+if [ "$#" -ne 5 ]; then
+    echo "오류: 잘못된 매개변수 개수입니다. (입력: $#개, 필요: 5개)"
+    echo ""
+    show_usage
     exit 1
 fi
 
 KOLLA_VIP=$1
 EXT_NET_RANGE_START=$2
 EXT_NET_RANGE_END=$3
+INTERNAL_INTERFACE_NAME=$4
+EXTERNAL_INTERFACE_NAME=$5
 STACK_USER="stack"
 STACK_HOME="/opt/$STACK_USER"
 
-
+echo "=== 입력된 설정 정보 ==="
+echo "내부 VIP: $KOLLA_VIP"
+echo "외부망 IP 풀: $EXT_NET_RANGE_START ~ $EXT_NET_RANGE_END"
+echo "내부 인터페이스: $INTERNAL_INTERFACE_NAME"
+echo "외부 인터페이스: $EXTERNAL_INTERFACE_NAME"
+echo ""
 
 # 실행 중 오류가 발생하면 즉시 중단
-
 set -e
 
+# --- 1. 네트워크 인터페이스 검증 ---
+echo "1. 네트워크 인터페이스를 검증합니다..."
 
+# 인터페이스 존재 여부 확인
+check_interface_exists "$INTERNAL_INTERFACE_NAME" "내부 인터페이스" || exit 1
+check_interface_exists "$EXTERNAL_INTERFACE_NAME" "외부 인터페이스" || exit 1
 
-# --- 1. 네트워크 인터페이스 및 VIP 검증 ---
-
-echo "1. 네트워크 인터페이스 및 VIP 주소를 검증합니다..."
-
-PHY_NICS=($(ls /sys/class/net | grep -E '^(eth|ens|enp|eno)'))
-
-if [ "${#PHY_NICS[@]}" -lt 2 ]; then
-    echo "오류: 최소 2개 이상의 물리적 네트워크 인터페이스가 필요합니다."
+# 동일한 인터페이스 사용 방지
+if [[ "$INTERNAL_INTERFACE_NAME" == "$EXTERNAL_INTERFACE_NAME" ]]; then
+    echo "오류: 내부와 외부 인터페이스가 동일합니다 ($INTERNAL_INTERFACE_NAME)."
+    echo "서로 다른 인터페이스를 지정해야 합니다."
     exit 1
 fi
 
-INTERNAL_INTERFACE_NAME=$(ip route | grep default | awk '{print $5}')
-if [ -z "$INTERNAL_INTERFACE_NAME" ]; then
-    echo "오류: 기본 경로(default route)를 사용하는 네트워크 인터페이스를 찾을 수 없습니다."
+# 인터페이스 상태 및 IP 확인
+echo "   인터페이스 상태 확인 중..."
+check_interface_status "$INTERNAL_INTERFACE_NAME" "내부 인터페이스" "yes" || exit 1
+check_interface_status "$EXTERNAL_INTERFACE_NAME" "외부 인터페이스" "no"
+
+echo "   - 네트워크 인터페이스 검증 완료"
+
+# --- 2. IP 주소 검증 ---
+echo "2. IP 주소 유효성을 검증합니다..."
+
+# IP 형식 및 범위 검증
+validate_ip "$KOLLA_VIP" "VIP 주소" || exit 1
+validate_ip "$EXT_NET_RANGE_START" "외부망 시작 IP" || exit 1
+validate_ip "$EXT_NET_RANGE_END" "외부망 끝 IP" || exit 1
+
+# 외부망 IP 대역 검증
+EXT_START_NET=$(echo "$EXT_NET_RANGE_START" | cut -d. -f1-3)
+EXT_END_NET=$(echo "$EXT_NET_RANGE_END" | cut -d. -f1-3)
+
+if [[ "$EXT_START_NET" != "$EXT_END_NET" ]]; then
+    echo "오류: 외부망 시작 IP($EXT_NET_RANGE_START)와 끝 IP($EXT_NET_RANGE_END)가 동일한 서브넷에 속하지 않습니다."
     exit 1
 fi
 
-EXTERNAL_INTERFACE_NAME=""
-for nic in "${PHY_NICS[@]}"; do
-    if [ "$nic" != "$INTERNAL_INTERFACE_NAME" ]; then
-        EXTERNAL_INTERFACE_NAME=$nic
-        break
-    fi
-done
+# IP 범위 검증
+EXT_START_HOST=$(echo "$EXT_NET_RANGE_START" | cut -d. -f4)
+EXT_END_HOST=$(echo "$EXT_NET_RANGE_END" | cut -d. -f4)
 
-if [ -z "$EXTERNAL_INTERFACE_NAME" ]; then
-    echo "오류: 내부용 인터페이스와 다른 외부용 물리적 인터페이스를 찾을 수 없습니다."
+if (( EXT_START_HOST >= EXT_END_HOST )); then
+    echo "오류: 외부망 시작 IP가 끝 IP보다 크거나 같습니다."
     exit 1
 fi
-echo "   - 인터페이스 검증 완료: Internal NIC='${INTERNAL_INTERFACE_NAME}', External NIC='${EXTERNAL_INTERFACE_NAME}'"
 
-# --- VIP 및 외부망 IP 유효성 검증 ---
-# 1. IP 형식 검사
+# --- 3. VIP 서브넷 검증 ---
+echo "3. VIP 서브넷을 검증합니다..."
 
-for ip in "$KOLLA_VIP" "$EXT_NET_RANGE_START" "$EXT_NET_RANGE_END"; do
-    if ! [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        echo "오류: 입력한 주소 '$ip'는 올바른 IP 형식이 아닙니다."
+# 내부 IP 정보 추출
+INTERNAL_IP_CIDR=$(ip -4 addr show "$INTERNAL_INTERFACE_NAME" | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+' | head -n1)
+INTERNAL_IP=$(echo "$INTERNAL_IP_CIDR" | cut -d'/' -f1)
+PREFIX=$(echo "$INTERNAL_IP_CIDR" | cut -d'/' -f2)
+
+echo "   - 내부 네트워크: $INTERNAL_IP_CIDR"
+
+# 간단한 서브넷 검증 (C클래스 기준)
+if (( PREFIX >= 24 )); then
+    INTERNAL_NET=$(echo "$INTERNAL_IP" | cut -d. -f1-3)
+    VIP_NET=$(echo "$KOLLA_VIP" | cut -d. -f1-3)
+    
+    if [[ "$INTERNAL_NET" != "$VIP_NET" ]]; then
+        echo "오류: VIP 주소($KOLLA_VIP)가 내부 네트워크($INTERNAL_IP_CIDR)와 다른 서브넷에 있습니다."
+        echo "VIP는 내부 네트워크와 같은 서브넷에 있어야 합니다."
         exit 1
     fi
-done
-
-# 2. 외부망 IP 대역 서브넷 일치 검사 ( /24 기준 )
-
-EXT_NET_START_SUBNET=$(echo $EXT_NET_RANGE_START | cut -d. -f1-3)
-EXT_NET_END_SUBNET=$(echo $EXT_NET_RANGE_END | cut -d. -f1-3)
-
-if [ "$EXT_NET_START_SUBNET" != "$EXT_NET_END_SUBNET" ]; then
-    echo "오류: 외부망 시작 IP($EXT_NET_RANGE_START)와 끝 IP($EXT_NET_RANGE_END)가 동일한 서브넷에 속하지 않습니다. (C클래스 기준)"
-    exit 1
-fi
-
-# 3. VIP 서브넷 일치 검사
-
-INTERNAL_IP_CIDR=$(ip -4 addr show $INTERNAL_INTERFACE_NAME | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+')
-INTERNAL_IP=$(echo $INTERNAL_IP_CIDR | cut -d'/' -f1)
-PREFIX=$(echo $INTERNAL_IP_CIDR | cut -d'/' -f2)
-
-# VIP와 서버 IP가 같아도 되도록 허용합니다.
-if [ "$KOLLA_VIP" == "$INTERNAL_IP" ]; then
-    echo "경고: VIP 주소($KOLLA_VIP)가 서버의 실제 IP 주소와 동일합니다. 단일 노드 테스트 환경에서만 사용하세요."
-fi
-
-
-
-# 서브넷 비교 로직
-
-SERVER_NET_PART=""
-VIP_NET_PART=""
-if (( PREFIX >= 24 )); then
-    SERVER_NET_PART=$(echo $INTERNAL_IP | cut -d. -f1-3)
-    VIP_NET_PART=$(echo $KOLLA_VIP | cut -d. -f1-3)
 elif (( PREFIX >= 16 )); then
-    SERVER_NET_PART=$(echo $INTERNAL_IP | cut -d. -f1-2)
-    VIP_NET_PART=$(echo $KOLLA_VIP | cut -d. -f1-2)
-elif (( PREFIX >= 8 )); then
-    SERVER_NET_PART=$(echo $INTERNAL_IP | cut -d. -f1)
-    VIP_NET_PART=$(echo $KOLLA_VIP | cut -d. -f1)
+    INTERNAL_NET=$(echo "$INTERNAL_IP" | cut -d. -f1-2)
+    VIP_NET=$(echo "$KOLLA_VIP" | cut -d. -f1-2)
+    
+    if [[ "$INTERNAL_NET" != "$VIP_NET" ]]; then
+        echo "오류: VIP 주소가 내부 네트워크와 다른 서브넷에 있습니다."
+        exit 1
+    fi
+else
+    echo "경고: 비정상적인 서브넷 마스크(/$PREFIX)입니다. VIP 설정을 수동으로 확인하세요."
 fi
 
-
-
-if [ -n "$SERVER_NET_PART" ] && [ "$SERVER_NET_PART" != "$VIP_NET_PART" ]; then
-    echo "오류: VIP 주소($KOLLA_VIP)가 서버의 내부 IP 서브넷($INTERNAL_IP_CIDR)과 일치하지 않습니다."
-    exit 1
+# VIP 중복 확인
+if [[ "$KOLLA_VIP" == "$INTERNAL_IP" ]]; then
+    echo "경고: VIP 주소($KOLLA_VIP)가 서버의 실제 IP 주소와 동일합니다."
+    echo "단일 노드 테스트 환경에서만 권장됩니다."
 fi
-echo "   - VIP 및 외부망 IP 주소 검증 완료."
 
+# IP 풀 크기 확인
+POOL_SIZE=$(( EXT_END_HOST - EXT_START_HOST + 1 ))
+if (( POOL_SIZE < 10 )); then
+    echo "경고: 외부망 IP 풀이 작습니다(${POOL_SIZE}개). 최소 10개 이상 권장됩니다."
+fi
 
+echo "   - 모든 검증 완료"
+echo "     VIP: $KOLLA_VIP (내부 네트워크: $INTERNAL_IP_CIDR)"
+echo "     외부 IP 풀: $EXT_NET_RANGE_START ~ $EXT_NET_RANGE_END (총 ${POOL_SIZE}개)"
+echo "     내부 NIC: $INTERNAL_INTERFACE_NAME"
+echo "     외부 NIC: $EXTERNAL_INTERFACE_NAME"
 
+# =================================================================================
+# 최종 확인 및 설치 시작 여부 결정
+# =================================================================================
 
+echo ""
+echo "=========================================="
+echo "OpenStack 설치 준비 완료!"
+echo "=========================================="
+echo ""
+echo "설정 요약:"
+echo "  • VIP 주소: $KOLLA_VIP"
+echo "  • 내부 인터페이스: $INTERNAL_INTERFACE_NAME"
+echo "  • 외부 인터페이스: $EXTERNAL_INTERFACE_NAME"
+echo "  • 외부 IP 풀: $EXT_NET_RANGE_START ~ $EXT_NET_RANGE_END"
+echo ""
+echo "주의: OpenStack 설치가 시작됩니다."
+echo "   설치 과정은 20-30분 정도 소요되며, 중간에 중단하면 시스템이 불안정해질 수 있습니다."
+echo ""
+echo "5초 후 자동으로 설치가 시작됩니다."
+echo "   설치를 중단하려면 아무 키나 누르세요..."
+
+# 5초 대기하면서 키 입력 감지
+if timeout 5 bash -c 'read -n 1 -s'; then
+    echo ""
+    echo ""
+    echo "사용자에 의해 설치가 중단되었습니다."
+    echo "   설치를 원하면 스크립트를 다시 실행하세요."
+    exit 0
+fi
+
+echo ""
+echo "설치를 시작합니다..."
+echo ""
 
 # 외부망 네트워크 정보 자동 생성
 EXT_NET_RANGE="start=${EXT_NET_RANGE_START},end=${EXT_NET_RANGE_END}"
-EXT_NET_SUBNET=$(echo $EXT_NET_RANGE_START | cut -d. -f1-3)
+EXT_NET_SUBNET="$EXT_START_NET"
 EXT_NET_CIDR="${EXT_NET_SUBNET}.0/24"
 EXT_NET_GATEWAY="${EXT_NET_SUBNET}.1"
-
-
-
 
 # =================================================================================
 # 시스템 설치 준비
@@ -153,7 +301,7 @@ EXT_NET_GATEWAY="${EXT_NET_SUBNET}.1"
 
 # --- 2. 시스템 사전 준비 자동화 ---
 
-echo "2. 시스템 사전 준비를 시작합니다 (Swap, 방화벽 등)..."
+echo "4. 시스템 사전 준비를 시작합니다 (Swap, 방화벽 등)..."
 
 sudo swapoff -a
 sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
@@ -202,15 +350,26 @@ EOC
 sudo mkdir -p /etc/kolla
 sudo chown \$USER:\$USER /etc/kolla
 
-# --- 7. 로컬 globals.yml 파일 복사 및 설정 적용 ---
-echo "7. 로컬 globals.yml 파일을 복사하고 최종 설정을 적용합니다..."
-# 스크립트와 같은 경로에 있는 globals.yml 파일을 사용합니다.
-if [ ! -f "globals.yml" ]; then
-    echo "오류: 스크립트와 동일한 위치에 globals.yml 파일이 없습니다."
+echo "7. 로컬 globals.yml 설정을 적용합니다..."
+
+# 스크립트 디렉토리 확인
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GLOBALS_FILE="$SCRIPT_DIR/globals.yml"
+
+if [ ! -f "$GLOBALS_FILE" ]; then
+    echo "오류: globals.yml 파일을 찾을 수 없습니다."
+    echo "예상 위치: $GLOBALS_FILE"
+    echo "globals.yml 파일이 스크립트와 같은 디렉토리에 있는지 확인하세요."
+    echo ""
+    echo "현재 디렉토리 파일 목록:"
+    ls -la "$SCRIPT_DIR/"
     exit 1
 fi
-sudo cp ./globals.yml /etc/kolla/globals.yml
 
+echo "   - globals.yml 파일 발견: $GLOBALS_FILE"
+sudo cp "$GLOBALS_FILE" /etc/kolla/globals.yml
+
+# 동적 설정 변경
 sudo sed -i "s/^kolla_internal_vip_address:.*/kolla_internal_vip_address: \"$KOLLA_VIP\"/" /etc/kolla/globals.yml
 sudo sed -i "s/^network_interface:.*/network_interface: \"$INTERNAL_INTERFACE_NAME\"/" /etc/kolla/globals.yml
 sudo sed -i "s/^neutron_external_interface:.*/neutron_external_interface: \"$EXTERNAL_INTERFACE_NAME\"/" /etc/kolla/globals.yml
@@ -253,6 +412,4 @@ EOF
 # --- stack 사용자 명령어 블록 끝 ---
 
 echo ""
-
 echo "모든 설치 과정이 성공적으로 완료되었습니다!"
-
