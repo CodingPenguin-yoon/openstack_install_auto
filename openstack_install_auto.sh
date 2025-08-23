@@ -305,8 +305,8 @@ echo "4. 시스템 사전 준비를 시작합니다 (Swap, 방화벽 등)..."
 
 sudo swapoff -a
 sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
-sudo systemctl stop ufw apparmor
-sudo systemctl disable ufw apparmor
+sudo systemctl stop ufw apparmor || true
+sudo systemctl disable ufw apparmor || true
 
 # --- 3. 'stack' 사용자 생성 및 권한 설정 ---
 
