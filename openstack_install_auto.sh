@@ -394,10 +394,14 @@ echo "   - 최종 설정 완료: VIP=$KOLLA_VIP, Internal NIC=$INTERNAL_INTERFAC
 
 echo "8. OpenStack 배포를 시작합니다..."
 
-source \$HOME/kolla-openstack/bin/activate
+
 INVENTORY_PATH="\$HOME/kolla-openstack/share/kolla-ansible/ansible/inventory/all-in-one"
+
+source \$HOME/kolla-openstack/bin/activate
+
+kolla-ansible install-deps
+kolla-genpwd 
 kolla-ansible -i \$INVENTORY_PATH bootstrap-servers
-kolla-genpwd
 kolla-ansible -i \$INVENTORY_PATH prechecks
 kolla-ansible -i \$INVENTORY_PATH deploy
 
