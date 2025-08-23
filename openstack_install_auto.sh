@@ -327,6 +327,29 @@ sudo apt-get install -y git python3-dev libffi-dev python3-venv gcc libssl-dev p
 
 # --- 여기부터 stack 사용자로 명령어 블록 실행 ---
 
+
+
+
+
+
+# [수정] sudo 블록에 들어가기 전, 현재 스크립트의 디렉토리에서 globals.yml의 절대 경로를 미리 확인합니다.
+
+echo "globals.yml 파일의 절대 경로를 확인합니다..."
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+GLOBALS_FILE_PATH="$SCRIPT_DIR/globals.yml"
+
+if [ ! -f "$GLOBALS_FILE_PATH" ]; then
+    echo "오류: globals.yml 파일을 찾을 수 없습니다!"
+    echo "스크립트와 동일한 디렉토리($SCRIPT_DIR)에 globals.yml 파일이 있어야 합니다."
+    exit 1
+fi
+echo "   - globals.yml 파일 발견: $GLOBALS_FILE_PATH"
+echo ""
+
+
+
+
+
 sudo -u $STACK_USER -i <<EOF
 set -e
 
@@ -352,22 +375,16 @@ sudo chown \$USER:\$USER /etc/kolla
 
 echo "7. 로컬 globals.yml 설정을 적용합니다..."
 
-# 스크립트 디렉토리 확인
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GLOBALS_FILE="$SCRIPT_DIR/globals.yml"
 
-if [ ! -f "$GLOBALS_FILE" ]; then
-    echo "오류: globals.yml 파일을 찾을 수 없습니다."
-    echo "예상 위치: $GLOBALS_FILE"
-    echo "globals.yml 파일이 스크립트와 같은 디렉토리에 있는지 확인하세요."
-    echo ""
-    echo "현재 디렉토리 파일 목록:"
-    ls -la "$SCRIPT_DIR/"
-    exit 1
-fi
 
-echo "   - globals.yml 파일 발견: $GLOBALS_FILE"
-sudo cp "$GLOBALS_FILE" /etc/kolla/globals.yml
+
+# [수정] 외부에서 미리 확인해 둔 절대 경로 변수($GLOBALS_FILE_PATH)를 사용해 파일을 복사합니다.
+echo "   - 원본 파일 위치: $GLOBALS_FILE_PATH"
+sudo cp "$GLOBALS_FILE_PATH" /etc/kolla/globals.yml
+
+
+
+
 
 # 동적 설정 변경
 sudo sed -i "s/^kolla_internal_vip_address:.*/kolla_internal_vip_address: \"$KOLLA_VIP\"/" /etc/kolla/globals.yml
