@@ -316,6 +316,7 @@ if ! id -u $STACK_USER > /dev/null 2>&1; then
     sudo useradd -s /bin/bash -d $STACK_HOME -m $STACK_USER
     sudo chmod 755 $STACK_HOME
     echo "$STACK_USER ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/$STACK_USER
+    sleep 2  # 사용자 생성 후 대기
 fi
 
 # --- 4. 필수 패키지 설치 ---
@@ -324,6 +325,7 @@ echo "4. 시스템을 업데이트하고 필수 패키지를 설치합니다..."
 
 sudo apt-get update
 sudo apt-get install -y git python3-dev libffi-dev python3-venv gcc libssl-dev python3-pip python3-full pkg-config libdbus-1-dev cmake libglib2.0-dev curl
+sleep 2  # 패키지 설치 후 대기
 
 # --- 여기부터 stack 사용자로 명령어 블록 실행 ---
 
@@ -345,20 +347,25 @@ if [ ! -f "$GLOBALS_FILE_PATH" ]; then
 fi
 echo "   - globals.yml 파일 발견: $GLOBALS_FILE_PATH"
 echo ""
+sleep 2  # sudo 전환 전 대기
 
 
 
 sudo -u $STACK_USER -i <<EOF
 set -e
+sleep 2
 
 cd $STACK_HOME
+sleep 2
 
 echo "5. Kolla-Ansible과 관련 라이브러리를 설치합니다..."
 
 python3 -m venv $HOME/kolla-openstack
+sleep 1  # 가상환경 생성 후 대기
 source $HOME/kolla-openstack/bin/activate
 pip install -U pip 'ansible>=8,<9' docker pkgconfig dbus-python
 pip install git+https://opendev.org/openstack/kolla-ansible@stable/2024.1
+sleep 1  # kolla-ansible 설치 후 대기
 deactivate
 
 echo "6. Ansible 및 Kolla 설정을 준비합니다..."
@@ -372,6 +379,7 @@ EOC
 
 sudo mkdir -p /etc/kolla
 sudo chown stack:stack /etc/kolla
+sleep 1  # 권한 설정 후 대기
 
 echo "7. 로컬 globals.yml 설정을 적용합니다..."
 
@@ -381,6 +389,7 @@ echo "7. 로컬 globals.yml 설정을 적용합니다..."
 # [수정] 외부에서 미리 확인해 둔 절대 경로 변수($GLOBALS_FILE_PATH)를 사용해 파일을 복사합니다.
 echo "   - 원본 파일 위치: $GLOBALS_FILE_PATH"
 sudo cp "$GLOBALS_FILE_PATH" /etc/kolla/globals.yml
+sleep 1  # 파일 복사 후 대기
 
 
 
@@ -398,19 +407,29 @@ echo "8. OpenStack 배포를 시작합니다..."
 INVENTORY_PATH="$HOME/kolla-openstack/share/kolla-ansible/ansible/inventory/all-in-one"
 
 source $HOME/kolla-openstack/bin/activate
+sleep 1  # 가상환경 활성화 후 대기
 
 kolla-ansible install-deps
-kolla-genpwd 
+sleep 2  # install-deps 후 대기
+kolla-genpwd
+sleep 1  # genpwd 후 대기
 kolla-ansible -i \$INVENTORY_PATH bootstrap-servers
+sleep 3  # bootstrap-servers 후 대기
 kolla-ansible -i \$INVENTORY_PATH prechecks
+sleep 2  # prechecks 후 대기
 kolla-ansible -i \$INVENTORY_PATH deploy
+sleep 3  # deploy 후 대기
 
 echo "9. 배포 후 마무리 작업을 진행합니다..."
 
 sudo usermod -aG docker stack
+sleep 1  # docker 그룹 추가 후 대기
 pip install python-openstackclient -c https://releases.openstack.org/constraints/upper/2024.1
+sleep 1  # openstackclient 설치 후 대기
 kolla-ansible -i \$INVENTORY_PATH post-deploy
+sleep 2  # post-deploy 후 대기
 source /etc/kolla/admin-openrc.sh
+sleep 1  # admin-openrc 로드 후 대기
 
 echo "10. 'init-runonce' 스크립트를 실행하여 초기 환경을 설정합니다..."
 
