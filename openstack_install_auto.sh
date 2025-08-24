@@ -13,8 +13,8 @@
 #          3. Cinder를 위한 LVM 볼륨 그룹(VG) 생성
 #          4. globals.yml 파일이 스크립트와 같은 디렉토리에 위치
 #
-# 사용법: sudo ./openstack_install_auto.sh [내부 VIP] [외부망 시작IP] [외부망 끝IP] [내부NIC] [외부NIC]
-# 예시:   sudo ./openstack_install_auto.sh 192.168.2.10 192.168.2.50 192.168.2.80 ens18 ens19
+# 사용법: ./openstack_install_auto.sh [내부 VIP] [외부망 시작IP] [외부망 끝IP] [내부NIC] [외부NIC]
+# 예시:   ./openstack_install_auto.sh 192.168.2.10 192.168.2.50 192.168.2.80 ens18 ens19
 #
 # =================================================================================
 
@@ -377,7 +377,7 @@ deactivate
 
 echo "6. Ansible 및 Kolla 설정을 준비합니다..."
 
-cat > \$HOME/ansible.cfg <<EOC
+cat > $STACK_HOME/ansible.cfg <<EOC
 [defaults]
 host_key_checking=False
 pipelining=True
@@ -417,20 +417,20 @@ kolla-ansible install-deps
 sleep 2  # install-deps 후 대기
 kolla-genpwd
 sleep 1  # genpwd 후 대기
-kolla-ansible -i \$INVENTORY_PATH bootstrap-servers
+kolla-ansible -i $INVENTORY_PATH bootstrap-servers
 sleep 3  # bootstrap-servers 후 대기
-kolla-ansible -i \$INVENTORY_PATH prechecks
+kolla-ansible -i $INVENTORY_PATH prechecks
 sleep 2  # prechecks 후 대기
-kolla-ansible -i \$INVENTORY_PATH deploy
+kolla-ansible -i $INVENTORY_PATH deploy
 sleep 3  # deploy 후 대기
 
 echo "9. 배포 후 마무리 작업을 진행합니다..."
 
-sudo usermod -aG docker stack
+sudo usermod -aG docker $STACK_USER
 sleep 1  # docker 그룹 추가 후 대기
 pip install python-openstackclient -c https://releases.openstack.org/constraints/upper/2024.1
 sleep 1  # openstackclient 설치 후 대기
-kolla-ansible -i \$INVENTORY_PATH post-deploy
+kolla-ansible -i $INVENTORY_PATH post-deploy
 sleep 2  # post-deploy 후 대기
 source /etc/kolla/admin-openrc.sh
 sleep 1  # admin-openrc 로드 후 대기
@@ -438,13 +438,13 @@ sleep 1  # admin-openrc 로드 후 대기
 echo "10. 'init-runonce' 스크립트를 실행하여 초기 환경을 설정합니다..."
 
 INIT_RUNONCE_PATH="$STACK_HOME/kolla-openstack/share/kolla-ansible/init-runonce"
-if [ -f "\$INIT_RUNONCE_PATH" ]; then
+if [ -f "$INIT_RUNONCE_PATH" ]; then
     # sed를 이용해 init-runonce 파일의 네트워크 변수들을 동적으로 변경
-    sudo sed -i "s|^EXT_NET_CIDR=.*|EXT_NET_CIDR='${EXT_NET_CIDR}'|" "\$INIT_RUNONCE_PATH"
-    sudo sed -i "s|^EXT_NET_GATEWAY=.*|EXT_NET_GATEWAY='${EXT_NET_GATEWAY}'|" "\$INIT_RUNONCE_PATH"
-    sudo sed -i "s|^EXT_NET_RANGE=.*|EXT_NET_RANGE='${EXT_NET_RANGE}'|" "\$INIT_RUNONCE_PATH"
+    sudo sed -i "s|^EXT_NET_CIDR=.*|EXT_NET_CIDR='${EXT_NET_CIDR}'|" "$INIT_RUNONCE_PATH"
+    sudo sed -i "s|^EXT_NET_GATEWAY=.*|EXT_NET_GATEWAY='${EXT_NET_GATEWAY}'|" "$INIT_RUNONCE_PATH"
+    sudo sed -i "s|^EXT_NET_RANGE=.*|EXT_NET_RANGE='${EXT_NET_RANGE}'|" "$INIT_RUNONCE_PATH"
     echo "   - 외부 네트워크 설정을 동적으로 변경했습니다 (CIDR: ${EXT_NET_CIDR}, Gateway: ${EXT_NET_GATEWAY}, Pool: ${EXT_NET_RANGE})."
-    bash "\$INIT_RUNONCE_PATH"
+    bash "$INIT_RUNONCE_PATH"
 fi
 
 echo "최종 OpenStack 서비스 목록을 확인합니다:"
