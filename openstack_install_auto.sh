@@ -388,6 +388,14 @@ sudo mkdir -p /etc/kolla
 sudo chown $STACK_USER:$STACK_USER /etc/kolla
 sleep 1  # 권한 설정 후 대기
 
+# Kolla 설정 파일들 복사 (passwords.yml 템플릿 포함)
+cp $STACK_HOME/kolla-openstack/share/kolla-ansible/etc_examples/kolla/* /etc/kolla/
+sleep 1  # 파일 복사 후 대기
+
+# Inventory 파일 복사
+cp $STACK_HOME/kolla-openstack/share/kolla-ansible/ansible/inventory/all-in-one .
+sleep 1  # inventory 복사 후 대기
+
 echo "7. 로컬 globals.yml 설정을 적용합니다..."
 
 
@@ -395,6 +403,7 @@ echo "7. 로컬 globals.yml 설정을 적용합니다..."
 
 # [수정] 외부에서 미리 확인해 둔 절대 경로 변수($GLOBALS_FILE_PATH)를 사용해 파일을 복사합니다.
 echo "   - 원본 파일 위치: $GLOBALS_FILE_PATH"
+sudo rm -f /etc/kolla/globals.yml
 sudo cp "$GLOBALS_FILE_PATH" /etc/kolla/globals.yml
 sleep 1  # 파일 복사 후 대기
 
@@ -408,7 +417,7 @@ echo "   - 최종 설정 완료: VIP=$KOLLA_VIP, Internal NIC=$INTERNAL_INTERFAC
 echo "8. OpenStack 배포를 시작합니다..."
 
 
-INVENTORY_PATH="$STACK_HOME/kolla-openstack/share/kolla-ansible/ansible/inventory/all-in-one"
+INVENTORY_PATH="$STACK_HOME/all-in-one"
 
 source $STACK_HOME/kolla-openstack/bin/activate
 sleep 1  # 가상환경 활성화 후 대기
