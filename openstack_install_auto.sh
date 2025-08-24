@@ -22,20 +22,24 @@
 
 # --- 유틸리티 함수들 ---
 show_usage() {
-    echo "사용법: $0 [내부 VIP] [외부망 시작IP] [외부망 끝IP] [내부NIC] [외부NIC]"
+    echo "사용법: $0 [내부NIC] [외부NIC] [내부IP] [외부망 시작IP] [외부망 끝IP]"
     echo ""
     echo "매개변수:"
-    echo "  내부 VIP      : Kolla 내부 VIP 주소 (예: 192.168.2.10)"
-    echo "  외부망 시작IP  : 외부 네트워크 IP 풀 시작 (예: 192.168.2.50)"
-    echo "  외부망 끝IP   : 외부 네트워크 IP 풀 끝 (예: 192.168.2.80)"
     echo "  내부NIC      : 내부 네트워크 인터페이스명 (예: ens18)"
     echo "  외부NIC      : 외부 네트워크 인터페이스명 (예: ens19)"
+    echo "  내부IP       : 내부 인터페이스에 할당된 IP (VIP로 사용, 예: 192.168.2.100)"
+    echo "  외부망 시작IP : 외부 네트워크 IP 풀 시작 (예: 192.168.2.50)"
+    echo "  외부망 끝IP  : 외부 네트워크 IP 풀 끝 (예: 192.168.2.80)"
     echo ""
     echo "필수 파일:"
     echo "  globals.yml  : Kolla-Ansible 설정 파일 (스크립트와 같은 디렉토리)"
     echo ""
+    echo "참고:"
+    echo "  • 내부IP는 실제 내부 인터페이스에 할당된 IP와 일치해야 합니다"
+    echo "  • 내부IP가 VIP로 사용됩니다 (단일 노드 구성)"
+    echo ""
     echo "예시:"
-    echo "  $0 192.168.2.10 192.168.2.50 192.168.2.80 ens18 ens19"
+    echo "  $0 ens18 ens19 192.168.2.100 192.168.2.50 192.168.2.80"
     echo ""
     echo "현재 시스템의 네트워크 인터페이스 목록:"
     echo "----------------------------------------"
@@ -136,19 +140,19 @@ if [ "$#" -ne 5 ]; then
     exit 1
 fi
 
-KOLLA_VIP=$1
-EXT_NET_RANGE_START=$2
-EXT_NET_RANGE_END=$3
-INTERNAL_INTERFACE_NAME=$4
-EXTERNAL_INTERFACE_NAME=$5
+INTERNAL_INTERFACE_NAME=$1
+EXTERNAL_INTERFACE_NAME=$2
+KOLLA_VIP=$3
+EXT_NET_RANGE_START=$4
+EXT_NET_RANGE_END=$5
 STACK_USER="$USER"
 STACK_HOME="/opt/$STACK_USER"
 
 echo "=== 입력된 설정 정보 ==="
-echo "내부 VIP: $KOLLA_VIP"
-echo "외부망 IP 풀: $EXT_NET_RANGE_START ~ $EXT_NET_RANGE_END"
 echo "내부 인터페이스: $INTERNAL_INTERFACE_NAME"
 echo "외부 인터페이스: $EXTERNAL_INTERFACE_NAME"
+echo "내부 VIP: $KOLLA_VIP"
+echo "외부망 IP 풀: $EXT_NET_RANGE_START ~ $EXT_NET_RANGE_END"
 echo ""
 
 # 실행 중 오류가 발생하면 즉시 중단
@@ -173,10 +177,35 @@ echo "   인터페이스 상태 확인 중..."
 check_interface_status "$INTERNAL_INTERFACE_NAME" "내부 인터페이스" "yes" || exit 1
 check_interface_status "$EXTERNAL_INTERFACE_NAME" "외부 인터페이스" "no"
 
+# --- 2. 내부 IP 일치 확인 ---
+echo "2. 내부 IP 일치 여부를 확인합니다..."
+
+# 내부 IP 정보 추출
+INTERNAL_IP_CIDR=$(ip -4 addr show "$INTERNAL_INTERFACE_NAME" | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+' | head -n1)
+INTERNAL_IP=$(echo "$INTERNAL_IP_CIDR" | cut -d'/' -f1)
+
+if [[ -z "$INTERNAL_IP" ]]; then
+    echo "오류: 내부 인터페이스 '$INTERNAL_INTERFACE_NAME'에 IP 주소가 할당되지 않았습니다."
+    exit 1
+fi
+
+# 입력된 내부 IP와 실제 할당된 IP 비교
+if [[ "$KOLLA_VIP" != "$INTERNAL_IP" ]]; then
+    echo "오류: 입력된 내부 IP($KOLLA_VIP)와 실제 할당된 IP($INTERNAL_IP)가 일치하지 않습니다."
+    echo ""
+    echo "현재 '$INTERNAL_INTERFACE_NAME' 인터페이스 정보:"
+    echo "  할당된 IP: $INTERNAL_IP_CIDR"
+    echo ""
+    echo "올바른 명령어:"
+    echo "  $0 $INTERNAL_INTERFACE_NAME $EXTERNAL_INTERFACE_NAME $INTERNAL_IP $EXT_NET_RANGE_START $EXT_NET_RANGE_END"
+    exit 1
+fi
+
+echo "   - 내부 IP 일치 확인 완료: $KOLLA_VIP"
 echo "   - 네트워크 인터페이스 검증 완료"
 
-# --- 2. IP 주소 검증 ---
-echo "2. IP 주소 유효성을 검증합니다..."
+# --- 3. IP 주소 검증 ---
+echo "3. IP 주소 유효성을 검증합니다..."
 
 # IP 형식 및 범위 검증
 validate_ip "$KOLLA_VIP" "VIP 주소" || exit 1
@@ -201,12 +230,10 @@ if (( EXT_START_HOST >= EXT_END_HOST )); then
     exit 1
 fi
 
-# --- 3. VIP 서브넷 검증 ---
-echo "3. VIP 서브넷을 검증합니다..."
+# --- 4. VIP 서브넷 검증 ---
+echo "4. VIP 서브넷을 검증합니다..."
 
-# 내부 IP 정보 추출
-INTERNAL_IP_CIDR=$(ip -4 addr show "$INTERNAL_INTERFACE_NAME" | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+' | head -n1)
-INTERNAL_IP=$(echo "$INTERNAL_IP_CIDR" | cut -d'/' -f1)
+# 내부 IP 정보는 이미 추출됨 (INTERNAL_IP_CIDR, INTERNAL_IP)
 PREFIX=$(echo "$INTERNAL_IP_CIDR" | cut -d'/' -f2)
 
 echo "   - 내부 네트워크: $INTERNAL_IP_CIDR"
@@ -434,13 +461,23 @@ sleep 3  # deploy 후 대기
 echo "9. 배포 후 마무리 작업을 진행합니다..."
 
 sudo usermod -aG docker $STACK_USER
-sleep 1  # docker 그룹 추가 후 대기
+sleep 1
+docker ps
+sleep 5
+
+source $STACK_HOME/kolla-openstack/bin/activate
 pip install python-openstackclient -c https://releases.openstack.org/constraints/upper/2024.1
+pip install python-neutronclient -c https://releases.openstack.org/constraints/upper/2024.1
+pip install python-glanceclient -c https://releases.openstack.org/constraints/upper/2024.1
+pip install python-heatclient -c https://releases.openstack.org/constraints/upper/2024.1
+
 sleep 1  # openstackclient 설치 후 대기
 kolla-ansible -i $INVENTORY_PATH post-deploy
 sleep 2  # post-deploy 후 대기
 source /etc/kolla/admin-openrc.sh
 sleep 1  # admin-openrc 로드 후 대기
+openstack service list
+deactivate
 
 echo "10. 'init-runonce' 스크립트를 실행하여 초기 환경을 설정합니다..."
 
@@ -454,8 +491,9 @@ if [ -f "$INIT_RUNONCE_PATH" ]; then
     bash "$INIT_RUNONCE_PATH"
 fi
 
+source $STACK_HOME/kolla-openstack/bin/activate
+kolla-openstack/share/kolla-ansible/init-runonce
 echo "최종 OpenStack 서비스 목록을 확인합니다:"
-
 openstack service list
 deactivate
 
