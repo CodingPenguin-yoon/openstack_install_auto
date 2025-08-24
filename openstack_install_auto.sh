@@ -238,7 +238,7 @@ PREFIX=$(echo "$INTERNAL_IP_CIDR" | cut -d'/' -f2)
 
 echo "   - 내부 네트워크: $INTERNAL_IP_CIDR"
 
-# 간단한 서브넷 검증 (C클래스 기준)
+# 간단한 서브넷 검증 
 if (( PREFIX >= 24 )); then
     INTERNAL_NET=$(echo "$INTERNAL_IP" | cut -d. -f1-3)
     VIP_NET=$(echo "$KOLLA_VIP" | cut -d. -f1-3)
@@ -251,6 +251,14 @@ if (( PREFIX >= 24 )); then
 elif (( PREFIX >= 16 )); then
     INTERNAL_NET=$(echo "$INTERNAL_IP" | cut -d. -f1-2)
     VIP_NET=$(echo "$KOLLA_VIP" | cut -d. -f1-2)
+    
+    if [[ "$INTERNAL_NET" != "$VIP_NET" ]]; then
+        echo "오류: VIP 주소가 내부 네트워크와 다른 서브넷에 있습니다."
+        exit 1
+    fi
+elif (( PREFIX >= 8 )); then
+    INTERNAL_NET=$(echo "$INTERNAL_IP" | cut -d. -f1)
+    VIP_NET=$(echo "$KOLLA_VIP" | cut -d. -f1)
     
     if [[ "$INTERNAL_NET" != "$VIP_NET" ]]; then
         echo "오류: VIP 주소가 내부 네트워크와 다른 서브넷에 있습니다."
