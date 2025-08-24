@@ -260,11 +260,6 @@ else
     echo "경고: 비정상적인 서브넷 마스크(/$PREFIX)입니다. VIP 설정을 수동으로 확인하세요."
 fi
 
-# VIP 중복 확인
-if [[ "$KOLLA_VIP" == "$INTERNAL_IP" ]]; then
-    echo "경고: VIP 주소($KOLLA_VIP)가 서버의 실제 IP 주소와 동일합니다."
-    echo "단일 노드 테스트 환경에서만 권장됩니다."
-fi
 
 # IP 풀 크기 확인
 POOL_SIZE=$(( EXT_END_HOST - EXT_START_HOST + 1 ))
@@ -501,5 +496,4 @@ EOF
 # --- stack 사용자 명령어 블록 끝 ---
 
 echo ""
-echo "모든 설치 과정이 성공적으로 완료되었습니다!"
 echo "모든 설치 과정이 성공적으로 완료되었습니다!"
