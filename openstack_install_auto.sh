@@ -365,8 +365,6 @@ sleep 2
 cd $STACK_HOME
 sleep 2
 
-echo "5. Kolla-Ansible과 관련 라이브러리를 설치합니다..."
-
 python3 -m venv $STACK_HOME/kolla-openstack
 sleep 1  # 가상환경 생성 후 대기
 source $STACK_HOME/kolla-openstack/bin/activate
